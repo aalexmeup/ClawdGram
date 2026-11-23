@@ -67,6 +67,19 @@ jobs:
           git config --global user.email "you@example.com"
           git config --global user.name "Sample"
 
+      # breakpad's dump_syms needs ATL headers, which the runner only ships
+      # for its newest toolset, not for the pinned 14.44.
+      - name: Install ATL for MSVC 14.44.
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $p = Start-Process -FilePath "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" -Wait -PassThru -ArgumentList `
+            'modify','--installPath',"`"$vs`"",'--quiet','--norestart','--nocache', `
+            '--add','Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL'
+          Write-Host "setup.exe exit code: $($p.ExitCode)"
+          Get-ChildItem "$vs\VC\Tools\MSVC" | Select-Object -ExpandProperty Name
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
+
       - uses: ilammy/msvc-dev-cmd@v1
         name: Native Tools Command Prompt.
         with:
@@ -79,18 +92,21 @@ jobs:
           nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
           nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
 
+      # Restore/save are split so that progress is kept even if the build fails
+      # (actions/cache only saves on success). Keys include the run id so a
+      # later successful run can still store the final result.
       - name: ThirdParty cache.
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.TBUILD }}\ThirdParty
-          key: ${{ runner.os }}-third-party-${{ env.CACHE_KEY }}
+          key: ${{ runner.os }}-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.os }}-third-party-
 
       - name: Libraries cache.
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.LibrariesPath }}
-          key: ${{ runner.os }}-x64-libs-${{ env.CACHE_KEY }}
+          key: ${{ runner.os }}-x64-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}
           restore-keys: ${{ runner.os }}-x64-libs-
 
       # Builds Qt, ffmpeg, webrtc etc. Slow on the first run, cached afterwards.
@@ -101,8 +117,23 @@ jobs:
           %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat
 
       - name: Free up some disk space.
+        if: always()
         shell: bash
         run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' -o -path '*/src/wallet_engine/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save ThirdParty cache.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.os }}-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}
+
+      - name: Save Libraries cache.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.LibrariesPath }}
+          key: ${{ runner.os }}-x64-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}
 
       - name: Build.
         env:
