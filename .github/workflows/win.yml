@@ -97,7 +97,7 @@ jobs:
       - name: Libraries.
         run: |
           set CARGO_INCREMENTAL=0
-          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat
 
       - name: Free up some disk space.
         shell: bash
